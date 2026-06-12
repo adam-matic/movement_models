@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2052BB">
+    <meta name="author" content="Adam Matić">
+    <link href="../../css/base.css" rel="stylesheet" type="text/css"/>
+    <title>Hill-type muscles – Movement models</title>
+    <meta name="description" content="Interactive exploration of the Hill muscle model: force-length, force-velocity, and activation dynamics.">
+    <style>
+        .ctrl-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em 2em;
+            justify-content: center;
+            margin: 0.6em 0;
+            font-size: 1.05em;
+        }
+        .ctrl-row label { display: flex; align-items: center; gap: 0.5em; color: #555; }
+        .ctrl-row input[type=range] { width: 140px; cursor: pointer; }
+        .ctrl-row span { min-width: 3em; text-align: right; font-variant-numeric: tabular-nums; }
+        .replay-btn {
+            display: block;
+            margin: 0.5em auto 0;
+            padding: 0.3em 1.2em;
+            font-size: 1em;
+            font-family: inherit;
+            background: #fff;
+            border: 2px solid #2052BB;
+            color: #2052BB;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .replay-btn:hover { background: #f0f4ff; }
+        .fig-caption {
+            text-align: center;
+            font-size: 0.88em;
+            color: #888;
+            margin-top: 0.3em;
+        }
+    </style>
+</head>
+<body>
+<div id="main_container">
+<div id="body">
+<div id="banner">
+    <div id="banner_wrapper">
+        <div id="banner_content">
+            <div id="site_title"><a href="/">Movement models, simulation and control</a></div>
+            <div id="navigation"><a href="/">Home</a></div>
+        </div>
+    </div>
+</div>
+
+<div id="content">
+<div class="article">
+
+<div class="post_date">June 2026</div>
+<h1 class="post_title">Hill-type muscles</h1>
+
+<div class="padding_wrapper">
+<p>Muscles produce force by converting chemical energy into mechanical work. The Hill model — originally proposed by A.V. Hill in 1938 and refined for simulations by Thelen (2003) — describes how the force a muscle can produce depends on three things: how long the muscle is, how fast it is changing length, and how activated it is.</p>
+</div>
+
+<h2>Force-length relationship</h2>
+
+<div class="padding_wrapper">
+<p>A muscle has an <em>optimal length</em> at which it produces peak force. Stretch it too far or compress it too much, and force drops. There are two components: the <em>active</em> force (from cross-bridge cycling, driven by activation) and the <em>passive</em> force (from elastic structures like titin, present even without activation).</p>
+</div>
+
+<div class="drawer_container ratio_55">
+    <div class="canvas_container">
+        <canvas id="fl_canvas"></canvas>
+    </div>
+</div>
+<p class="fig-caption">Active (blue), passive (orange), and total (dark) force vs. normalized muscle length. Dashed line shows force at current length.</p>
+
+<div class="ctrl-row">
+    <label>Length <input type="range" id="fl_len" min="0.5" max="1.7" step="0.01" value="1.0"> <span id="fl_len_val">1.00</span> l₀</label>
+    <label>Activation <input type="range" id="fl_act" min="0" max="1" step="0.01" value="1.0"> <span id="fl_act_val">1.00</span></label>
+</div>
+
+<h2>Force-velocity relationship</h2>
+
+<div class="padding_wrapper">
+<p>Force also depends on the rate of length change. During shortening (concentric contraction), force decreases — the faster the muscle shortens, the less force it can produce. During lengthening (eccentric contraction), force rises above isometric. The Hill hyperbola captures the concentric side; a linear extension handles the eccentric side.</p>
+</div>
+
+<div class="drawer_container ratio_55">
+    <div class="canvas_container">
+        <canvas id="fv_canvas"></canvas>
+    </div>
+</div>
+<p class="fig-caption">Normalized force vs. normalized velocity. Negative velocity = shortening; positive = lengthening.</p>
+
+<div class="ctrl-row">
+    <label>Velocity <input type="range" id="fv_vel" min="-1" max="1" step="0.01" value="0"> <span id="fv_vel_val">0.00</span> v₀</label>
+</div>
+
+<h2>Activation dynamics</h2>
+
+<div class="padding_wrapper">
+<p>Neural signals don’t directly set muscle force — they drive activation through a first-order filter. Activation rises with time constant τ<sub>act</sub> = 75 ms and decays more slowly with τ<sub>deact</sub> = 50 ms. This filtering limits how fast you can switch muscles on and off.</p>
+</div>
+
+<div class="drawer_container ratio_45">
+    <div class="canvas_container">
+        <canvas id="act_canvas"></canvas>
+    </div>
+</div>
+<p class="fig-caption">Neural excitation (dashed) and resulting activation (solid) for a 300 ms pulse. Time in milliseconds.</p>
+<button class="replay-btn" id="act_replay">▶ Replay</button>
+
+<h2>Putting it together</h2>
+<div class="padding_wrapper">
+<p>The total muscle force is:</p>
+</div>
+<div class="equation">
+    F = F₀ · [ a · f<sub>L</sub>(l) · f<sub>V</sub>(v) + f<sub>PE</sub>(l) ]
+</div>
+<div class="padding_wrapper">
+<p>where F₀ is the maximum isometric force, <em>a</em> is activation (0–1), f<sub>L</sub> is the active force-length curve, f<sub>V</sub> is the force-velocity curve, and f<sub>PE</sub> is the passive force-length curve.</p>
+<p>This model, combined with a skeleton and a controller, forms the basis for the simulations in the articles that follow.</p>
+</div>
+
+</div>
+</div>
+</div>
+</div>
+
+<script type="module">
+// Hill muscle parameters (Thelen 2003 / motornetjs)
+const GAMMA = 0.45;
+const Af = 0.25;
+const FMLEN = 1.4;
+const TAU_ACT = 0.075;
+const TAU_DEACT = 0.050;
+
+function flCE(ln) {
+    return Math.exp(-((ln - 1) ** 2) / GAMMA);
+}
+function flPE(ln) {
+    return Math.max(0, (Math.exp(5 * (ln - 1)) - 1) / (Math.exp(5) - 1));
+}
+function fvCE(vn) {
+    if (vn <= 0) return (1 + vn) / (1 - vn / Af);
+    return Math.min(1 + vn * (FMLEN - 1), FMLEN);
+}
+
+// Canvas utilities
+function fitCanvas(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    return [ctx, rect.width, rect.height];
+}
+
+function makePlot(W, H, xmin, xmax, ymin, ymax, pad) {
+    const p = pad || {t:24, r:20, b:40, l:50};
+    const pw = W - p.l - p.r;
+    const ph = H - p.t - p.b;
+    return {
+        toX: x => p.l + (x - xmin) / (xmax - xmin) * pw,
+        toY: y => p.t + ph - (y - ymin) / (ymax - ymin) * ph,
+        xmin, xmax, ymin, ymax,
+        l: p.l, r: p.r, t: p.t, b: p.b,
+        pw, ph, W, H
+    };
+}
+
+function drawAxes(ctx, pl, xlabel, ylabel) {
+    ctx.save();
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pl.toX(pl.xmin), pl.toY(0));
+    ctx.lineTo(pl.toX(pl.xmax), pl.toY(0));
+    ctx.moveTo(pl.toX(pl.xmin), pl.toY(pl.ymin));
+    ctx.lineTo(pl.toX(pl.xmin), pl.toY(pl.ymax));
+    ctx.stroke();
+
+    ctx.fillStyle = '#888';
+    ctx.font = '12px IBM Plex Sans, sans-serif';
+    ctx.textAlign = 'center';
+    // x ticks
+    const xstep = (pl.xmax - pl.xmin) <= 1.5 ? 0.25 : 0.5;
+    for (let x = Math.ceil(pl.xmin / xstep) * xstep; x <= pl.xmax + 1e-9; x += xstep) {
+        const px = pl.toX(x);
+        ctx.fillText(x.toFixed(x % 1 === 0 ? 0 : 2), px, pl.toY(pl.ymin) + 16);
+        ctx.beginPath();
+        ctx.strokeStyle = '#ddd';
+        ctx.moveTo(px, pl.toY(pl.ymin));
+        ctx.lineTo(px, pl.toY(pl.ymax));
+        ctx.stroke();
+    }
+    // y ticks
+    ctx.textAlign = 'right';
+    for (let y = 0; y <= pl.ymax + 1e-9; y += 0.5) {
+        const py = pl.toY(y);
+        ctx.fillText(y.toFixed(1), pl.toX(pl.xmin) - 5, py + 4);
+        ctx.beginPath();
+        ctx.strokeStyle = '#ddd';
+        ctx.moveTo(pl.toX(pl.xmin), py);
+        ctx.lineTo(pl.toX(pl.xmax), py);
+        ctx.stroke();
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#666';
+    ctx.font = '13px IBM Plex Sans, sans-serif';
+    ctx.fillText(xlabel, pl.toX((pl.xmin + pl.xmax) / 2), pl.H - 5);
+    ctx.save();
+    ctx.translate(13, pl.toY((pl.ymin + pl.ymax) / 2));
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(ylabel, 0, 0);
+    ctx.restore();
+    ctx.restore();
+}
+
+function drawCurve(ctx, pl, xs, ys, color, lineWidth, dash) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth || 2;
+    if (dash) ctx.setLineDash(dash);
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+        const px = pl.toX(xs[i]), py = pl.toY(ys[i]);
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawVLine(ctx, pl, x, color) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pl.toX(x), pl.toY(pl.ymin));
+    ctx.lineTo(pl.toX(x), pl.toY(pl.ymax));
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawDot(ctx, pl, x, y, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(pl.toX(x), pl.toY(y), 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+// ---- Force-Length plot ----
+const flCanvas = document.getElementById('fl_canvas');
+const flLenSlider = document.getElementById('fl_len');
+const flActSlider = document.getElementById('fl_act');
+const flLenVal = document.getElementById('fl_len_val');
+const flActVal = document.getElementById('fl_act_val');
+
+const N = 200;
+const lns = Array.from({length: N+1}, (_, i) => 0.5 + i * 1.2 / N);
+
+function drawFL() {
+    const [ctx, W, H] = fitCanvas(flCanvas);
+    const pl = makePlot(W, H, 0.5, 1.7, 0, 1.6);
+    ctx.clearRect(0, 0, W, H);
+    drawAxes(ctx, pl, 'Normalized length  (l / l₀)', 'Normalized force  (F / F₀)');
+
+    const act = parseFloat(flActSlider.value);
+    const activeFl = lns.map(l => act * flCE(l));
+    const passiveFl = lns.map(l => flPE(l));
+    const totalFl = lns.map((l, i) => activeFl[i] + passiveFl[i]);
+
+    drawCurve(ctx, pl, lns, passiveFl, '#e07b00', 2);
+    drawCurve(ctx, pl, lns, activeFl, '#2052BB', 2);
+    drawCurve(ctx, pl, lns, totalFl, '#333', 2.5);
+
+    const ln = parseFloat(flLenSlider.value);
+    drawVLine(ctx, pl, ln, '#888');
+    drawDot(ctx, pl, ln, act * flCE(ln), '#2052BB');
+    drawDot(ctx, pl, ln, flPE(ln), '#e07b00');
+    drawDot(ctx, pl, ln, act * flCE(ln) + flPE(ln), '#333');
+
+    // legend
+    const lx = pl.toX(1.3), ly = pl.toY(1.5);
+    [['#2052BB', 'Active'], ['#e07b00', 'Passive'], ['#333', 'Total']].forEach(([c, label], i) => {
+        ctx.save();
+        ctx.strokeStyle = c; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(lx, ly + i*18); ctx.lineTo(lx+22, ly + i*18); ctx.stroke();
+        ctx.fillStyle = '#555'; ctx.font = '12px IBM Plex Sans, sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText(label, lx + 27, ly + i*18 + 4);
+        ctx.restore();
+    });
+}
+
+flLenSlider.addEventListener('input', () => { flLenVal.textContent = parseFloat(flLenSlider.value).toFixed(2); drawFL(); });
+flActSlider.addEventListener('input', () => { flActVal.textContent = parseFloat(flActSlider.value).toFixed(2); drawFL(); });
+
+// ---- Force-Velocity plot ----
+const fvCanvas = document.getElementById('fv_canvas');
+const fvVelSlider = document.getElementById('fv_vel');
+const fvVelVal = document.getElementById('fv_vel_val');
+
+const vns = Array.from({length: N+1}, (_, i) => -1 + i * 2 / N);
+
+function drawFV() {
+    const [ctx, W, H] = fitCanvas(fvCanvas);
+    const pl = makePlot(W, H, -1, 1, 0, 1.6);
+    ctx.clearRect(0, 0, W, H);
+    drawAxes(ctx, pl, 'Normalized velocity  (v / v₀)', 'Normalized force  (F / F₀)');
+
+    drawCurve(ctx, pl, vns, vns.map(fvCE), '#2052BB', 2.5);
+
+    const vn = parseFloat(fvVelSlider.value);
+    drawVLine(ctx, pl, vn, '#888');
+    drawDot(ctx, pl, vn, fvCE(vn), '#2052BB');
+}
+
+fvVelSlider.addEventListener('input', () => { fvVelVal.textContent = parseFloat(fvVelSlider.value).toFixed(2); drawFV(); });
+
+// ---- Activation dynamics ----
+const actCanvas = document.getElementById('act_canvas');
+const actReplay = document.getElementById('act_replay');
+
+const DT = 0.001;
+const TOTAL = 0.65;
+const ON = 0.1;
+const OFF = 0.4;
+const steps = Math.round(TOTAL / DT);
+const times = Array.from({length: steps}, (_, i) => i * DT * 1000);
+const excitations = times.map(t => (t >= ON*1000 && t < OFF*1000) ? 1 : 0);
+const activations = new Float32Array(steps);
+
+// Pre-compute activation trace
+{
+    let a = 0;
+    for (let i = 0; i < steps; i++) {
+        const u = excitations[i];
+        const tau = u > a ? TAU_ACT * (0.5 + 1.5 * a) : TAU_DEACT / (0.5 + 1.5 * a);
+        a += DT / tau * (u - a);
+        activations[i] = a;
+    }
+}
+
+let animFrame = null;
+let revealIdx = 0;
+const REVEAL_PER_FRAME = Math.ceil(steps / 120);
+
+function drawActStatic(ctx, W, H, upTo) {
+    const pl = makePlot(W, H, 0, TOTAL*1000, 0, 1.2, {t:24, r:20, b:40, l:50});
+    ctx.clearRect(0, 0, W, H);
+
+    // custom axes with time labels
+    ctx.save();
+    ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pl.toX(0), pl.toY(0)); ctx.lineTo(pl.toX(TOTAL*1000), pl.toY(0));
+    ctx.moveTo(pl.toX(0), pl.toY(0)); ctx.lineTo(pl.toX(0), pl.toY(1.2));
+    ctx.stroke();
+    ctx.fillStyle = '#888'; ctx.font = '12px IBM Plex Sans, sans-serif'; ctx.textAlign = 'center';
+    [0, 100, 200, 300, 400, 500, 600].forEach(t => {
+        const px = pl.toX(t);
+        ctx.fillText(t, px, pl.toY(0) + 16);
+        ctx.beginPath(); ctx.strokeStyle = '#ddd';
+        ctx.moveTo(px, pl.toY(0)); ctx.lineTo(px, pl.toY(1.2)); ctx.stroke();
+    });
+    ctx.textAlign = 'right';
+    [0, 0.5, 1.0].forEach(y => {
+        ctx.fillText(y.toFixed(1), pl.toX(0) - 5, pl.toY(y) + 4);
+        ctx.beginPath(); ctx.strokeStyle = '#ddd';
+        ctx.moveTo(pl.toX(0), pl.toY(y)); ctx.lineTo(pl.toX(TOTAL*1000), pl.toY(y)); ctx.stroke();
+    });
+    ctx.textAlign = 'center'; ctx.fillStyle = '#666'; ctx.font = '13px IBM Plex Sans, sans-serif';
+    ctx.fillText('Time (ms)', pl.toX(TOTAL*500), H - 5);
+    ctx.save(); ctx.translate(13, pl.toY(0.6)); ctx.rotate(-Math.PI/2);
+    ctx.fillText('Activation / Excitation', 0, 0); ctx.restore();
+    ctx.restore();
+
+    // excitation step (dashed)
+    drawCurve(ctx, pl, times.slice(0, upTo), excitations.slice(0, upTo), '#aaa', 1.5, [5, 4]);
+    // activation (solid)
+    drawCurve(ctx, pl, times.slice(0, upTo), Array.from(activations.slice(0, upTo)), '#2052BB', 2.5);
+}
+
+function animateAct() {
+    const [ctx, W, H] = fitCanvas(actCanvas);
+    const frame = () => {
+        revealIdx = Math.min(revealIdx + REVEAL_PER_FRAME, steps);
+        drawActStatic(ctx, W, H, revealIdx);
+        if (revealIdx < steps) animFrame = requestAnimationFrame(frame);
+    };
+    revealIdx = 0;
+    if (animFrame) cancelAnimationFrame(animFrame);
+    animFrame = requestAnimationFrame(frame);
+}
+
+actReplay.addEventListener('click', animateAct);
+
+// ---- Init + resize ----
+function initAll() {
+    drawFL();
+    drawFV();
+    animateAct();
+}
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { drawFL(); drawFV(); drawActStatic(...(() => { const [ctx, W, H] = fitCanvas(actCanvas); return [ctx, W, H, steps]; })()); }, 100);
+});
+
+initAll();
+</script>
+</body>
+</html>
