@@ -7,7 +7,7 @@
     <meta name="author" content="Adam Matić">
     <link href="../../css/base.css" rel="stylesheet" type="text/css"/>
     <title>Model-free reaching arm – Movement models</title>
-    <meta name="description" content="An interactive 2-DOF, 6-muscle arm that reaches without inverse kinematics or inverse dynamics, controlled by a Perceptual Control Theory cascade running in your browser on motornet.js.">
+    <meta name="description" content="An interactive 2-DOF, 4-muscle arm that reaches without inverse kinematics or inverse dynamics, controlled by a Perceptual Control Theory cascade running in your browser on motornet.js, with an in-browser evolutionary optimiser.">
     <style>
         .sim-wrap { max-width: 46rem; margin: 1.5em auto 0; padding: 0 3rem; }
         .arm-stage {
@@ -81,51 +81,28 @@
 <div id="content">
 <div class="article">
 
-<div class="post_date">July 2026</div>
-<h1 class="post_title">A model-free reaching arm</h1>
-
-<div class="padding_wrapper">
-<p>This is a two-joint, six-muscle arm — the same <code>CompliantTendonArm26</code> effector used across these articles — reaching to targets <em>without</em> any inverse kinematics or inverse dynamics. There is no trajectory planner and no internal model of the arm's dynamics. Instead, the arm is steered by a small hierarchy of negative-feedback loops in the spirit of <a href="https://en.wikipedia.org/wiki/Perceptual_control_theory">Perceptual Control Theory</a>: each level perceives a quantity, compares it to a reference, and acts to cancel the difference. Movement is a <em>side effect</em> of controlling perceptions, not a plan that is executed.</p>
-</div>
-
 <div class="sim-wrap">
     <div class="arm-stage">
         <canvas id="arm_canvas"></canvas>
     </div>
     <div class="diag" id="diag">&nbsp;</div>
-    <div class="hint">Click or drag anywhere inside the box to set a reach target.</div>
 
     <div class="mbars" id="muscle_bars"></div>
-    <p class="fig-caption">Muscle activations: pectoralis, deltoid, brachioradialis, triceps&nbsp;lateralis, biceps, triceps&nbsp;longus.</p>
 
     <div class="panel">
-        <h3>Reference — what the arm is told to control</h3>
         <div class="ctrl-grid">
             <label><span class="nm">Reach r*</span><input type="range" id="sl_rref" min="0.05" max="0.62" step="0.005"><span class="vv" id="val_rref"></span></label>
             <label><span class="nm">Point φ*</span><input type="range" id="sl_phiref" min="10" max="150" step="1"><span class="vv" id="val_phiref"></span></label>
             <label><span class="nm">Co-contract c*</span><input type="range" id="sl_cref" min="0" max="500" step="5" value="0"><span class="vv" id="val_cref"></span></label>
         </div>
 
-        <h3>Reach impedance — L3 task-space spring &amp; damper (radial)</h3>
         <div class="ctrl-grid">
             <label><span class="nm">K<sub>P,r</sub></span><input type="range" id="sl_kp_r"><span class="vv" id="val_kp_r"></span></label>
             <label><span class="nm">K<sub>D,r</sub></span><input type="range" id="sl_kd_r"><span class="vv" id="val_kd_r"></span></label>
-        </div>
-
-        <h3>Point impedance — L3 task-space spring &amp; damper (angular)</h3>
-        <div class="ctrl-grid">
             <label><span class="nm">K<sub>P,φ</sub></span><input type="range" id="sl_kp_phi"><span class="vv" id="val_kp_phi"></span></label>
             <label><span class="nm">K<sub>D,φ</sub></span><input type="range" id="sl_kd_phi"><span class="vv" id="val_kd_phi"></span></label>
-        </div>
-
-        <h3>Spinal layer — L2 force distribution</h3>
-        <div class="ctrl-grid">
             <label><span class="nm">Leak</span><input type="range" id="sl_leak"><span class="vv" id="val_leak"></span></label>
             <label><span class="nm">K<sub>co</sub></span><input type="range" id="sl_k_co"><span class="vv" id="val_k_co"></span></label>
-        </div>
-
-        <h3>Transport delays — afferent feedback latency</h3>
-        <div class="ctrl-grid">
             <label><span class="nm">Proprio.</span><input type="range" id="sl_prop"><span class="vv" id="val_prop"></span></label>
             <label><span class="nm">GTO (Ib)</span><input type="range" id="sl_gto"><span class="vv" id="val_gto"></span></label>
             <label><span class="nm">Geometry</span><input type="range" id="sl_spn"><span class="vv" id="val_spn"></span></label>
@@ -134,34 +111,11 @@
         <div class="btn-row">
             <button id="btn_pause">⏸ Pause</button>
             <button id="btn_reset">↺ Reset arm</button>
+            <button id="btn_evolve">⚙ Evolve</button>
             <button id="btn_defaults">Restore defaults</button>
         </div>
+        <div class="diag" id="evo_status">&nbsp;</div>
     </div>
-</div>
-
-<h2>How it works</h2>
-<div class="padding_wrapper">
-<p>The controller is a three-level cascade. Nothing in it inverts the arm's geometry or dynamics online — the only body knowledge it carries is a fixed 6×2 matrix mapping task-space errors to muscles.</p>
-<ul>
-<li><b>L3 — task position.</b> The hand's position is perceived in polar task coordinates: reach <em>r</em> (distance from the shoulder) and pointing angle <em>φ</em>, both computed by forward kinematics from the sensed joint angles. Two virtual springs-and-dampers turn the position error into a <em>task force</em> command: <code>Q<sub>r</sub>* = K<sub>P,r</sub>(r*−r) − K<sub>D,r</sub>ṙ</code> and likewise for φ.</li>
-<li><b>L2 — task force.</b> The six Golgi-tendon-organ force sensors are read as a perceived task force, compared with the L3 command, and the error is distributed to the muscles through a fixed weight matrix <em>W</em>. An activation <em>leak</em> bleeds the integrator toward rest.</li>
-<li><b>L1 — muscle activation</b> integrates the drive and excites the six Hill-type muscles on the compliant-tendon arm.</li>
-</ul>
-<p>The arm is <em>free</em> — it swings under the muscles rather than being clamped. That is essential: the motion itself gives the fast inner force loop the velocity damping it otherwise lacks, so the reach is stable where an isometric force loop would ring. Targets are approached through a <em>reference governor</em> that ramps the commanded reference to the target at a bounded rate; a literal step overshoots.</p>
-</div>
-
-<h2>Things to try</h2>
-<div class="padding_wrapper">
-<ul>
-<li><b>Drive it to instability.</b> Push <code>K<sub>P,r</sub></code> up while lowering <code>K<sub>D,r</sub></code> — the reach axis starts to ring. Damping and stiffness trade off exactly as in a physical spring.</li>
-<li><b>Feel the delays.</b> Raise the GTO (Ib) delay toward 40–60 ms. The inner force loop loses phase margin and the settling ring grows — this is the "delays set the ceiling" result from the underlying research: transport latency, not gain, is what limits how hard the arm can be driven.</li>
-<li><b>Stiffen without moving.</b> Raise the co-contraction reference <code>c*</code>. Total tendon force climbs and the arm gets stiffer against the target while the hand barely moves — stiffness is an independent controlled variable.</li>
-<li><b>Reach across the workspace</b> by clicking far targets. The single fixed gain set holds sub-centimetre accuracy over the whole reachable annulus.</li>
-</ul>
-</div>
-
-<div class="padding_wrapper">
-<p>The controller here is a faithful port of the current best reaching controller from the <code>musclesim</code> research project (<code>arm2dof/gto_reaching_2dof.py</code>), with its deployed gains and its evolution-tuned distribution matrix. The physics runs entirely in your browser on <a href="https://github.com/adam-matic/motornetjs">motornet.js</a>, a JavaScript port of <a href="https://github.com/OlivierCodol/MotorNet">MotorNet</a>. Everything above is a live simulation, not a recording.</p>
 </div>
 
 </div>

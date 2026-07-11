@@ -1,40 +1,92 @@
 // reach-controller.js
 // ---------------------------------------------------------------------------
 // A JavaScript port of the "current best arm" controller from the musclesim
-// project (arm2dof/gto_reaching_2dof.py). It drives motornet.js's
-// CompliantTendonArm26 (6 muscles, 2 joints) with a three-level, model-free
-// Perceptual-Control-Theory cascade — no inverse kinematics, no inverse
-// dynamics:
+// project (arm2dof/gto_reaching_2dof.py), reduced to a FOUR-muscle arm: the two
+// bi-articular muscles (biceps, triceps longus) have been removed, leaving four
+// mono-articular muscles — pectoralis and deltoid at the shoulder,
+// brachioradialis and triceps lateralis at the elbow. Each joint therefore has a
+// single antagonist pair.
+//
+// It drives motornet.js's compliant-tendon 2-joint arm with a three-level,
+// model-free Perceptual-Control-Theory cascade — no inverse kinematics, no
+// inverse dynamics:
 //
 //   L3  task POSITION (reach r, point phi), perceived from joint angles by
 //       forward kinematics, commands a task FORCE (task-space impedance):
 //           Q_r*   = KP_R  *(r*  - r)   - KD_R  * rdot
 //           Q_phi* = KP_PHI*(phi*- phi) - KD_PHI* phidot
-//   L2  task FORCE (from the 6 GTO tendon-tension sensors): mapped to muscle
-//       activation-rate through a fixed distribution matrix W.
-//   L1  muscle activation integrator drives the 6 muscles.
+//   L2  task FORCE (from the 4 GTO tendon-tension sensors): mapped to muscle
+//       activation-rate through a fixed distribution matrix W (now 4x2).
+//   L1  muscle activation integrator drives the 4 muscles.
 //
 // The arm is FREE (it moves); the motion supplies the inner force loop with the
 // velocity damping it lacks when clamped. Perception is forward kinematics + GTO
-// force only, all through transport delays. This continuous-time version keeps
-// ring buffers for the sensory delays and ramps the commanded reference toward
-// the target with a bounded-rate reference governor, exactly as the deployed
-// controller does (a literal step overshoots).
+// force only, all through transport delays.
 //
-// Deployed parameter values are taken verbatim from the musclesim repo:
-//   gains best_reaching_2dof.npy, distribution map best_reaching_W_joint_2dof.npy.
+// The gains and the 4x2 distribution matrix W below were produced by the
+// in-browser evolutionary optimiser (reach-evolve.js), which searches for
+// SMOOTH and ACCURATE reaching on this four-muscle arm.
 
 import { CompliantTendonArm26 } from '../../lib/motornetjs/index.js';
 
-export const M = 6;                 // muscles
+export const M = 4;                 // muscles (bi-articular pair removed)
 export const DT = 0.002;            // 2 ms control/plant step (Euler)
 export const Q1_0 = 0.70, Q2_0 = 1.20;  // start posture (shoulder, elbow) [rad]
-export const MUSCLE_NAMES = ['pec', 'deltoid', 'brachiorad', 'tricepslat', 'biceps', 'tricepslong'];
+export const MUSCLE_NAMES = ['pec', 'deltoid', 'brachiorad', 'tricepslat'];
 
-// Deployed default gains (best_reaching_2dof.npy) and constants.
+// A four-muscle compliant-tendon arm. It reuses CompliantTendonArm26's skeleton,
+// muscle model and moment-arm polynomials but keeps only the four mono-articular
+// muscles (drops biceps and triceps longus, columns 4 and 5).
+export class CompliantTendonArm24 extends CompliantTendonArm26 {
+  constructor(opts = {}) {
+    super(opts);
+    this.nMuscles = M;
+    this.inputDim = M;
+    this.muscleName = ['pectoralis', 'deltoid', 'brachioradialis', 'tricepslat'];
+    // rebuild the muscle vector with the four mono-articular columns only
+    const params = { max_isometric_force: [838, 1207, 1422, 1549],
+      tendon_length: [0.070, 0.070, 0.172, 0.187],
+      optimal_muscle_length: [0.134, 0.140, 0.092, 0.093] };
+    for (const key of this.muscle.toBuildKeys) {
+      if (!(key in params) && key in this.muscle.toBuildDefaults) params[key] = this.muscle.toBuildDefaults[key];
+    }
+    this.muscle.build(this.dt, params);
+    // keep the first four columns of the moment-arm polynomials
+    this.a0 = this.a0.slice(0, M);
+    this.a1 = [this.a1[0].slice(0, M), this.a1[1].slice(0, M)];
+    this.a2 = [this.a2[0].slice(0, M), this.a2[1].slice(0, M)];
+  }
+
+  // Same moment-arm polynomial evaluation as RigidTendonArm26, generalised to
+  // this.nMuscles instead of a hard-coded 6.
+  _getGeometry(jointState) {
+    const n = this.nMuscles;
+    const pos = [jointState[0] - this.a3[0], jointState[1] - this.a3[1]];
+    const vel = [jointState[2], jointState[3]];
+    const mtuLen = new Array(n);
+    const mtuVel = new Array(n);
+    const moment = [new Array(n), new Array(n)];
+    for (let m = 0; m < n; m++) {
+      let len = this.a0[m];
+      let velSum = 0;
+      for (let k = 0; k < 2; k++) {
+        const ma = pos[k] * this.a2[k][m] * 2 + this.a1[k][m];
+        moment[k][m] = ma;
+        len += (this.a1[k][m] + pos[k] * this.a2[k][m]) * pos[k];
+        velSum += vel[k] * ma;
+      }
+      mtuLen[m] = len;
+      mtuVel[m] = velSum;
+    }
+    return [mtuLen, mtuVel, ...moment];
+  }
+}
+
+// Deployed default gains and constants. The four impedance gains and the 4x2
+// distribution matrix W (below) come from reach-evolve.js — see EVOLVED_PARAMS.
 export const DEFAULTS = {
-  KP_R: 232.0, KD_R: 41.57,        // reach impedance: N/m, N/(m/s)
-  KP_PHI: 12.87, KD_PHI: 2.57,     // point impedance: Nm/rad, Nm/(rad/s)
+  KP_R: 131.61, KD_R: 44.71,       // reach impedance: N/m, N/(m/s)
+  KP_PHI: 4.54, KD_PHI: 2.27,      // point impedance: Nm/rad, Nm/(rad/s)
   LEAK: 0.05,                      // L2 activation leak
   K_CO: 0.012,                     // co-contraction (stiffness) gain
   C_REF: 0.0,                      // co-contraction reference (total tendon force, N)
@@ -43,16 +95,16 @@ export const DEFAULTS = {
   SPN_DELAY_MS: 20,                // moment-arm (geometry) sensing
 };
 
-// Deployed distribution map W (best_reaching_W_joint_2dof.npy), 6x2:
-// column 0 weights the Reach error, column 1 the Point error. Row order matches
-// MUSCLE_NAMES.
+// Distribution map W (4x2): column 0 weights the Reach error, column 1 the Point
+// error. Row order matches MUSCLE_NAMES. These gains and this W were produced by
+// the evolutionary optimiser (reach-evolve.js) searching for smooth, accurate
+// reaching across the workspace on the four-muscle arm — workspace-grid settled
+// accuracy: mean ~0.5 cm, max ~2 cm.
 export const W_JOINT = [
-  [0.030982, 0.429422],   // pec
-  [-0.087651, -0.18036],  // deltoid
-  [-0.226026, 0.082392],  // brachiorad
-  [0.021621, -0.020362],  // tricepslat
-  [-0.053444, 0.477113],  // biceps
-  [0.018714, -0.269611],  // tricepslong
+  [0.011479, 0.293859],   // pec
+  [-0.094605, -0.231490], // deltoid
+  [-0.076504, 0.077893],  // brachiorad
+  [0.066731, 0.058669],   // tricepslat
 ];
 
 // Forward kinematics of the 2-link arm, plus the geometry terms the controller
@@ -96,7 +148,7 @@ class Delay {
 export class ReachController {
   constructor(params = {}) {
     this.p = { ...DEFAULTS, W: W_JOINT.map((r) => r.slice()), ...params };
-    this.arm = new CompliantTendonArm26({ timestep: DT, integrationMethod: 'euler' });
+    this.arm = new CompliantTendonArm24({ timestep: DT, integrationMethod: 'euler' });
     this.L1 = this.arm.skeleton.L1;
     this.L2 = this.arm.skeleton.L2;
     this.reset();
@@ -151,7 +203,7 @@ export class ReachController {
     const qd = this.qBuf.get(s, propD);
     const Fd = this.fBuf.get(s, gtoD);
     const Rflat = this.rBuf.get(s, spnD);
-    const Rd = [Rflat.slice(0, M), Rflat.slice(M, 2 * M)];    // (2,6) moment arms
+    const Rd = [Rflat.slice(0, M), Rflat.slice(M, 2 * M)];    // (2,4) moment arms
     const g = taskFk(qd[0], qd[1], qd[2], qd[3], this.L1, this.L2);
 
     // L3: task-space impedance -> task force command
