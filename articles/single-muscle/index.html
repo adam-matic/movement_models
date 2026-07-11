@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2052BB">
+    <meta name="author" content="Adam Matić">
+    <link href="../../css/base.css" rel="stylesheet" type="text/css"/>
+    <title>Single muscle: a fibre-speed controller – Movement models</title>
+    <meta name="description" content="An isometric single muscle with a compliant tendon, spindle and Golgi-tendon-organ sensors, and a muscle-fibre speed controller you drive with a slider — running in the browser on motornet.js.">
+    <style>
+        .sim-wrap { max-width: 46rem; margin: 1.2em auto 0; padding: 0 3rem; }
+        .stage { position: relative; width: 100%; max-width: 560px; margin: 0 auto; }
+        .rig-stage { aspect-ratio: 5 / 2; }
+        .chart-stage { aspect-ratio: 5 / 3; margin-top: 0.6em; }
+        .stage canvas {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            background: #fbfcfe; border: 1px solid #e6e9f0; border-radius: 10px;
+        }
+        .readouts {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+            gap: 0.4em 0.8em; max-width: 560px; margin: 0.7em auto 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .ro { text-align: center; }
+        .ro .k { font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.04em; color: #999; display: block; }
+        .ro .v { font-size: 1.15em; color: #333; }
+        .panel { max-width: 40rem; margin: 1.2em auto 0; }
+        .panel h3 {
+            font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em;
+            color: #2052BB; margin: 1.1em 0 0.4em; padding: 0; font-family: inherit;
+        }
+        .ctrl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.4em 1.6em; }
+        .ctrl-grid label { display: flex; align-items: center; gap: 0.6em; font-size: 0.92em; color: #555; }
+        .ctrl-grid label .nm { flex: 0 0 6.2em; }
+        .ctrl-grid input[type=range] { flex: 1; cursor: pointer; min-width: 60px; }
+        .ctrl-grid .vv { flex: 0 0 4.6em; text-align: right; font-variant-numeric: tabular-nums; color: #333; }
+        .seg { display: inline-flex; border: 2px solid #2052BB; border-radius: 7px; overflow: hidden; margin: 0.2em 0 0.4em; }
+        .seg button {
+            padding: 0.35em 1.1em; font-size: 0.92em; font-family: inherit;
+            background: #fff; color: #2052BB; border: none; cursor: pointer;
+        }
+        .seg button.on { background: #2052BB; color: #fff; }
+        .btn-row { display: flex; flex-wrap: wrap; gap: 0.6em; justify-content: center; margin: 1.1em 0 0; }
+        .btn-row button {
+            padding: 0.35em 1.1em; font-size: 0.92em; font-family: inherit;
+            background: #fff; border: 2px solid #2052BB; color: #2052BB; border-radius: 6px; cursor: pointer;
+        }
+        .btn-row button:hover { background: #f0f4ff; }
+        .fig-caption { text-align: center; font-size: 0.88em; color: #888; margin-top: 0.3em; }
+    </style>
+</head>
+<body>
+<div id="main_container">
+<div id="body">
+<div id="banner">
+    <div id="banner_wrapper">
+        <div id="banner_content">
+            <div id="site_title"><a href="/">Movement models, simulation and control</a></div>
+            <div id="navigation"><a href="/">Home</a></div>
+        </div>
+    </div>
+</div>
+
+<div id="content">
+<div class="article">
+
+<div class="post_date">July 2026</div>
+<h1 class="post_title">A single muscle: sensors and a speed controller</h1>
+
+<div class="padding_wrapper">
+<p>One Hill-type muscle with a compliant tendon, anchored at <em>both</em> ends so the whole muscle–tendon unit cannot change length. This is an <em>isometric</em> setup — yet the muscle is far from static. When it activates, the contractile fibres shorten by a few percent and the elastic tendon stretches by the same amount, so tension rises while the endpoints stay fixed. Two sensors report what is happening inside: a <strong>muscle spindle</strong> (Ia) that reads fibre length and velocity, and a <strong>Golgi tendon organ</strong> (Ib) that reads tendon force.</p>
+</div>
+
+<div class="sim-wrap">
+    <div class="stage rig-stage"><canvas id="rig_canvas"></canvas></div>
+    <div class="readouts">
+        <div class="ro"><span class="k">Excitation</span><span class="v" id="ro_u">–</span></div>
+        <div class="ro"><span class="k">Activation</span><span class="v" id="ro_act">–</span></div>
+        <div class="ro"><span class="k">Fibre len</span><span class="v" id="ro_len">–</span></div>
+        <div class="ro"><span class="k">Tendon Δ</span><span class="v" id="ro_ten">–</span></div>
+        <div class="ro"><span class="k">Spindle v</span><span class="v" id="ro_vel">–</span></div>
+        <div class="ro"><span class="k">GTO force</span><span class="v" id="ro_force">–</span></div>
+    </div>
+
+    <div class="stage chart-stage"><canvas id="chart_canvas"></canvas></div>
+    <p class="fig-caption">Top: tendon force (Ib). Bottom: fibre shortening velocity — command (dashed) vs. spindle (solid).</p>
+
+    <div class="panel">
+        <h3>Controller</h3>
+        <div style="text-align:center">
+            <span class="seg">
+                <button id="mode_manual" class="on">Manual excitation</button>
+                <button id="mode_speed">Speed control</button>
+            </span>
+        </div>
+        <div class="ctrl-grid">
+            <label><span class="nm" id="primary_nm">Excitation</span><input type="range" id="sl_primary" min="0" max="1" step="0.01" value="0"><span class="vv" id="val_primary">0.00</span></label>
+        </div>
+
+        <div id="gain_ctrls">
+            <h3>Speed-controller gains</h3>
+            <div class="ctrl-grid">
+                <label><span class="nm">K<sub>P</sub></span><input type="range" id="sl_kp" min="0" max="30" step="0.5" value="3"><span class="vv" id="val_kp">3.0</span></label>
+                <label><span class="nm">K<sub>I</sub></span><input type="range" id="sl_ki" min="0" max="200" step="1" value="18"><span class="vv" id="val_ki">18</span></label>
+            </div>
+        </div>
+
+        <h3>Afferent delays</h3>
+        <div class="ctrl-grid">
+            <label><span class="nm">Spindle (Ia)</span><input type="range" id="sl_spd" min="0" max="50" step="1" value="15"><span class="vv" id="val_spd">15 ms</span></label>
+            <label><span class="nm">GTO (Ib)</span><input type="range" id="sl_gtod" min="0" max="50" step="1" value="15"><span class="vv" id="val_gtod">15 ms</span></label>
+        </div>
+
+        <div class="btn-row">
+            <button id="btn_pause">⏸ Pause</button>
+            <button id="btn_reset">↺ Reset</button>
+        </div>
+    </div>
+</div>
+
+<h2>What to try</h2>
+<div class="padding_wrapper">
+<ul>
+<li><b>Feel the isometry.</b> In <em>Manual excitation</em>, raise the slider. The fibre shortens a few millimetres, the tendon stretches by the same amount — the unit length never changes — and the GTO force climbs. That small internal shortening is the whole story of an isometric contraction.</li>
+<li><b>Control fibre speed.</b> Switch to <em>Speed control</em>. The slider now commands a fibre shortening velocity, and a proportional-integral controller drives excitation using the spindle's velocity signal. Positive shortens, negative lets the tendon recoil and re-lengthen the fibre.</li>
+<li><b>Hit the wall.</b> Hold a shortening command: the fibre tracks it for a moment, then stalls as the tendon loads up — the fibre only has a few millimetres of travel. Sustained fibre velocity is impossible in a truly isometric muscle; you can only move it <em>within</em> that travel, back and forth.</li>
+<li><b>Add delay.</b> Push the spindle delay toward 40–50 ms. The velocity loop loses phase margin and starts to ring — the same latency ceiling that shapes every reflex loop.</li>
+</ul>
+</div>
+
+<div class="padding_wrapper">
+<p>The muscle is motornet.js's <code>CompliantTendonHillMuscle</code>, driven at a fixed musculotendon length. Everything runs live in your browser. This is the first in a series on controlling a single muscle; force- and length-control loops build on the same rig.</p>
+</div>
+
+</div>
+</div>
+</div>
+</div>
+
+<script type="module" src="./muscle-lab.js"></script>
+</body>
+</html>
