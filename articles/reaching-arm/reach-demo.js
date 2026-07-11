@@ -1,5 +1,6 @@
 // reach-demo.js — interactive front-end for the model-free reaching controller.
 import { ReachController, taskIk, taskFk, MUSCLE_NAMES, DEFAULTS, M, DT } from './reach-controller.js';
+import { evolveAsync, paramsToVector, applyVector } from './reach-evolve.js';
 
 const controller = new ReachController();
 const L1 = controller.L1, L2 = controller.L2;
@@ -172,14 +173,49 @@ window.addEventListener('pointerup', () => { dragging = false; });
 document.getElementById('btn_reset').addEventListener('click', () => {
   controller.reset(); trail.length = 0; syncRefSlidersFromTarget();
 });
-document.getElementById('btn_defaults').addEventListener('click', () => {
-  Object.assign(controller.p, { ...DEFAULTS, W: controller.p.W });
+function refreshSliders() {
   SLIDERS.forEach(([id]) => {
     const el = sliderEls[id];
     el.input.value = controller.p[el.key];
     el.out.textContent = el.fmt(controller.p[el.key]);
   });
+}
+document.getElementById('btn_defaults').addEventListener('click', () => {
+  Object.assign(controller.p, { ...DEFAULTS, W: DEFAULTS_W });
+  refreshSliders();
   controller.p.C_REF = 0; cRefSl.value = 0; cRefVal.textContent = '0 N';
+  evoStatus.textContent = 'defaults restored';
+});
+// keep a copy of the deployed evolved W so "Restore defaults" can undo an evolve
+const DEFAULTS_W = controller.p.W.map((r) => r.slice());
+
+// ---- evolutionary optimiser (in-browser) ----------------------------------
+const evoBtn = document.getElementById('btn_evolve');
+const evoStatus = document.getElementById('evo_status');
+let evolving = false;
+evoBtn.addEventListener('click', async () => {
+  if (evolving) return;
+  evolving = true;
+  evoBtn.disabled = true;
+  const seedVector = paramsToVector(controller.p);
+  const raf = () => new Promise((res) => requestAnimationFrame(res));
+  const res = await evolveAsync({
+    seedVector, gens: 10, pop: 12, seed: (Math.random() * 1e9) | 0,
+    yieldFn: raf,
+    onGen: (gen, st) => {
+      evoStatus.textContent =
+        `evolving… gen ${gen + 1}/${st.gens} · loss ${st.startLoss.toFixed(2)} → ${st.loss.toFixed(2)} · `
+        + `mean ${st.comp.errCm.toFixed(2)} cm, max ${st.comp.maxErrCm.toFixed(2)} cm`;
+    },
+  });
+  applyVector(controller, res.vector);       // deploy the evolved parameters
+  refreshSliders();
+  evoStatus.textContent =
+    `evolved · loss ${res.startLoss.toFixed(2)} → ${res.loss.toFixed(2)} · `
+    + `settled mean ${res.comp.errCm.toFixed(2)} cm, max ${res.comp.maxErrCm.toFixed(2)} cm, `
+    + `smoothness ${res.comp.jerk.toFixed(2)}`;
+  evoBtn.disabled = false;
+  evolving = false;
 });
 let paused = false;
 const pauseBtn = document.getElementById('btn_pause');
