@@ -37,8 +37,20 @@ export const MUSCLE_NAMES = ['pec', 'deltoid', 'brachiorad', 'tricepslat'];
 // A four-muscle compliant-tendon arm. It reuses CompliantTendonArm26's skeleton,
 // muscle model and moment-arm polynomials but keeps only the four mono-articular
 // muscles (drops biceps and triceps longus, columns 4 and 5).
+// Shoulder upper limit. The stock Arm26 caps the shoulder at 135°; a workspace
+// analysis (rasterised forward kinematics) shows raising it to 160° enlarges the
+// reachable area by ~18% (0.466 -> 0.552 m^2) while both shoulder muscles stay
+// inside their active force-length band (pec 0.56, deltoid 1.45 normalized at the
+// limit; 180° would push the pectoralis to 0.48, below the ascending limb).
+export const SHOULDER_MAX_DEG = 160;
+export const ELBOW_MAX_DEG = 155;
+
 export class CompliantTendonArm24 extends CompliantTendonArm26 {
   constructor(opts = {}) {
+    const deg = Math.PI / 180;
+    if (!opts.posUpperBound) {
+      opts = { ...opts, posUpperBound: [SHOULDER_MAX_DEG * deg, ELBOW_MAX_DEG * deg] };
+    }
     super(opts);
     this.nMuscles = M;
     this.inputDim = M;
